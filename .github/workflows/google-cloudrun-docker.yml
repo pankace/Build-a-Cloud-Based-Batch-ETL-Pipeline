@@ -79,18 +79,25 @@ jobs:
           terraform_version: 1.4.0
           terraform_wrapper: false
 
-      # Create Terraform variables file
+      # Create Terraform variables file - FIXED VERSION
       - name: Create Terraform variable files
         run: |
           cd ${{ github.workspace }}/terraform
           
+          # Create a bucket name variable first
+          BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME }}"
+          if [ -z "$BUCKET_NAME" ]; then
+            BUCKET_NAME="etl-data-bucket-${{ secrets.GCP_PROJECT_ID }}"
+          fi
+          
+          # Now create the tfvars file using the variable
           cat > terraform.tfvars << EOF
           project_id = "${{ secrets.GCP_PROJECT_ID }}"
           project_number = "${{ secrets.GCP_PROJECT_NUMBER }}"
           extract_image = "${{ env.EXTRACT_IMAGE }}"
           load_image = "${{ env.LOAD_IMAGE }}"
           region = "${{ secrets.GCP_REGION || 'us-central1' }}"
-          bucket_name = "${{ secrets.GCS_BUCKET_NAME || 'etl-data-bucket-${{ secrets.GCP_PROJECT_ID }}' }}"
+          bucket_name = "$BUCKET_NAME"
           dataset_id = "${{ secrets.BIGQUERY_DATASET_ID || 'etl_dataset' }}"
           table_id = "${{ secrets.BIGQUERY_TABLE_ID || 'posts' }}"
           EOF
