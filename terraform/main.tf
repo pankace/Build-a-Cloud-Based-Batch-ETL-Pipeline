@@ -198,6 +198,7 @@ resource "google_cloud_run_v2_service" "extract_service" {
 }
 
 # Load Service (Cloud Run)
+# Load Service (Cloud Run)
 resource "google_cloud_run_v2_service" "load_service" {
   name     = "load-service"
   location = var.region
@@ -205,6 +206,12 @@ resource "google_cloud_run_v2_service" "load_service" {
   template {
     containers {
       image = var.load_image
+      
+      # Explicitly set the PORT environment variable
+      env {
+        name  = "PORT"
+        value = "8080"
+      }
       
       env {
         name  = "GCP_PROJECT_ID"
@@ -225,9 +232,26 @@ resource "google_cloud_run_v2_service" "load_service" {
         name  = "GCS_BUCKET"
         value = google_storage_bucket.data_bucket.name
       }
+      
+      # Add startup probe to give the container more time to initialize
+      startup_probe {
+        initial_delay_seconds = 10
+        timeout_seconds = 3
+        period_seconds = 5
+        failure_threshold = 10
+        
+        http_get {
+          path = "/"
+          port = 8080
+        }
+      }
     }
     
     service_account = google_service_account.etl_service_account.email
+    
+    # Increase timeout for container startup
+    max_instance_request_concurrency = 1
+    timeout = "300s"
   }
   
   lifecycle {
