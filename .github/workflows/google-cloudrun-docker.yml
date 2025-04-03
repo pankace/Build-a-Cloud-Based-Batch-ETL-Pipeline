@@ -33,24 +33,40 @@ jobs:
         run: |
           gcloud auth configure-docker gcr.io --quiet
 
-      # Build and push Extract component
+      # Build and push Extract component - FIXED COMMAND
       - name: Build Extract Docker image
         run: |
           cd ${{ github.workspace }}
-          gcloud builds submit \
-            --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest \
-            --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }} \
-            --dockerfile=docker/extract/Dockerfile .
+          # Create a temporary cloudbuild.yaml for extract
+          cat > cloudbuild-extract.yaml << EOF
+          steps:
+          - name: 'gcr.io/cloud-builders/docker'
+            args: ['build', '-f', 'docker/extract/Dockerfile', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}', '.']
+          images:
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest'
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}'
+          EOF
+          
+          # Submit the build
+          gcloud builds submit --config cloudbuild-extract.yaml .
           echo "EXTRACT_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}" >> $GITHUB_ENV
 
-      # Build and push Load component
+      # Build and push Load component - FIXED COMMAND
       - name: Build Load Docker image
         run: |
           cd ${{ github.workspace }}
-          gcloud builds submit \
-            --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest \
-            --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }} \
-            --dockerfile=docker/load/Dockerfile .
+          # Create a temporary cloudbuild.yaml for load
+          cat > cloudbuild-load.yaml << EOF
+          steps:
+          - name: 'gcr.io/cloud-builders/docker'
+            args: ['build', '-f', 'docker/load/Dockerfile', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}', '.']
+          images:
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest'
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}'
+          EOF
+          
+          # Submit the build
+          gcloud builds submit --config cloudbuild-load.yaml .
           echo "LOAD_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}" >> $GITHUB_ENV
 
       # Setup Terraform
@@ -71,7 +87,7 @@ jobs:
           extract_image = "${{ env.EXTRACT_IMAGE }}"
           load_image = "${{ env.LOAD_IMAGE }}"
           region = "${{ secrets.GCP_REGION || 'us-central1' }}"
-          bucket_name = "${{ secrets.GCS_BUCKET_NAME || format('etl-data-{0}', secrets.GCP_PROJECT_ID) }}"
+          bucket_name = "${{ secrets.GCS_BUCKET_NAME || 'etl-data-bucket-${{ secrets.GCP_PROJECT_ID }}' }}"
           dataset_id = "${{ secrets.BIGQUERY_DATASET_ID || 'etl_dataset' }}"
           table_id = "${{ secrets.BIGQUERY_TABLE_ID || 'posts' }}"
           EOF
