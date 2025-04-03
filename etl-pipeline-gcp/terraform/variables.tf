@@ -1,41 +1,43 @@
 variable "project_id" {
-  description = "The ID of the Google Cloud project"
+  description = "GCP Project ID"
+  type        = string
+}
+
+variable "project_number" {
+  description = "GCP Project Number"
   type        = string
 }
 
 variable "region" {
-  description = "The region where the Cloud Run services will be deployed"
-  type        = string
+  description = "GCP Region"
   default     = "us-central1"
-}
-
-variable "gcs_bucket_name" {
-  description = "The name of the Google Cloud Storage bucket"
   type        = string
 }
 
-variable "bigquery_dataset" {
-  description = "The BigQuery dataset where data will be loaded"
+variable "bigquery_dataset_id" {
+  description = "BigQuery Dataset ID"
+  default     = "etl_dataset"
   type        = string
 }
 
-variable "bigquery_table" {
-  description = "The BigQuery table where data will be loaded"
+variable "bigquery_table_id" {
+  description = "BigQuery Table ID"
+  default     = "data_table"
   type        = string
 }
 
-variable "cloud_run_image_extract" {
-  description = "The Docker image for the extract Cloud Run function"
+variable "extract_image" {
+  description = "Docker image for extract function"
   type        = string
 }
 
-variable "cloud_run_image_load" {
-  description = "The Docker image for the load Cloud Run function"
+variable "load_image" {
+  description = "Docker image for load function"
   type        = string
 }
 
-variable "scheduler_frequency" {
-  description = "The frequency for the Cloud Scheduler job (e.g., 'every 1 hours')"
+variable "data_source_url" {
+  description = "URL to fetch data from"
+  default     = "https://jsonplaceholder.typicode.com/posts"
   type        = string
-  default     = "every 1 hours"
 }

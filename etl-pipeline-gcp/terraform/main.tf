@@ -1,80 +1,236 @@
-resource "google_cloud_run_service" "extract" {
-  name     = "extract-function"
-  location = var.region
-
-  template {
-    spec {
-      containers {
-        image = "gcr.io/${var.project_id}/extract:latest"
-
-        env {
-          name  = "GCS_BUCKET"
-          value = var.gcs_bucket
-        }
-      }
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 4.0"
     }
   }
 }
 
-resource "google_cloud_run_service" "load" {
-  name     = "load-function"
-  location = var.region
-
-  template {
-    spec {
-      containers {
-        image = "gcr.io/${var.project_id}/load:latest"
-
-        env {
-          name  = "BQ_DATASET"
-          value = var.bq_dataset
-        }
-        env {
-          name  = "BQ_TABLE"
-          value = var.bq_table
-        }
-      }
-    }
-  }
+provider "google" {
+  project = var.project_id
+  region  = var.region
 }
 
+# Create GCS bucket for data storage
 resource "google_storage_bucket" "data_bucket" {
-  name     = var.gcs_bucket
+  name     = "${var.project_id}-data-bucket"
   location = var.region
+  force_destroy = true
 }
 
-resource "google_cloud_scheduler_job" "extract_job" {
-  name     = "extract-job"
-  schedule = var.schedule
-  time_zone = var.time_zone
+# Create BigQuery dataset
+resource "google_bigquery_dataset" "etl_dataset" {
+  dataset_id  = var.bigquery_dataset_id
+  description = "Dataset for ETL pipeline data"
+  location    = var.region
+}
 
-  http_target {
-    http_method = "POST"
-    uri         = google_cloud_run_service.extract.status[0].url
-    oidc_token {
-      service_account_email = google_service_account.cloud_run_sa.email
+# Create BigQuery table
+resource "google_bigquery_table" "etl_table" {
+  dataset_id = google_bigquery_dataset.etl_dataset.dataset_id
+  table_id   = var.bigquery_table_id
+
+  schema = <<EOF
+[
+  {
+    "name": "userId",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "id",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "title",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "body",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  }
+]
+EOF
+}
+
+# Enable required APIs
+resource "google_project_service" "services" {
+  for_each = toset([
+    "run.googleapis.com",
+    "storage.googleapis.com",
+    "bigquery.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "cloudscheduler.googleapis.com",
+    "artifactregistry.googleapis.com"
+  ])
+  project = var.project_id
+  service = each.value
+}
+
+# Service account for the Cloud Run services
+resource "google_service_account" "etl_service_account" {
+  account_id   = "etl-service-account"
+  display_name = "ETL Pipeline Service Account"
+}
+
+# Grant permissions to service account
+resource "google_project_iam_binding" "storage_admin" {
+  project = var.project_id
+  role    = "roles/storage.admin"
+  members = [
+    "serviceAccount:${google_service_account.etl_service_account.email}"
+  ]
+}
+
+resource "google_project_iam_binding" "bigquery_admin" {
+  project = var.project_id
+  role    = "roles/bigquery.admin"
+  members = [
+    "serviceAccount:${google_service_account.etl_service_account.email}"
+  ]
+}
+
+# Deploy Extract function to Cloud Run
+resource "google_cloud_run_v2_service" "extract_service" {
+  name     = "extract-service"
+  location = var.region
+  
+  template {
+    containers {
+      image = var.extract_image
+      
+      env {
+        name  = "GCS_BUCKET_NAME"
+        value = google_storage_bucket.data_bucket.name
+      }
+      
+      env {
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      
+      env {
+        name  = "DATA_SOURCE_URL"
+        value = var.data_source_url
+      }
+    }
+    
+    service_account = google_service_account.etl_service_account.email
+  }
+  
+  depends_on = [google_project_service.services["run.googleapis.com"]]
+}
+
+# Deploy Load function to Cloud Run
+resource "google_cloud_run_v2_service" "load_service" {
+  name     = "load-service"
+  location = var.region
+  
+  template {
+    containers {
+      image = var.load_image
+      
+      env {
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      
+      env {
+        name  = "BIGQUERY_DATASET_ID"
+        value = google_bigquery_dataset.etl_dataset.dataset_id
+      }
+      
+      env {
+        name  = "BIGQUERY_TABLE_ID"
+        value = google_bigquery_table.etl_table.table_id
+      }
+    }
+    
+    service_account = google_service_account.etl_service_account.email
+  }
+  
+  depends_on = [google_project_service.services["run.googleapis.com"]]
+}
+
+# Set up the GCS trigger for the Load function
+resource "google_cloud_run_v2_job" "load_job" {
+  name     = "load-job"
+  location = var.region
+  
+  template {
+    template {
+      containers {
+        image = var.load_image
+        
+        env {
+          name  = "GCP_PROJECT_ID"
+          value = var.project_id
+        }
+        
+        env {
+          name  = "BIGQUERY_DATASET_ID"
+          value = google_bigquery_dataset.etl_dataset.dataset_id
+        }
+        
+        env {
+          name  = "BIGQUERY_TABLE_ID"
+          value = google_bigquery_table.etl_table.table_id
+        }
+      }
+      
+      service_account = google_service_account.etl_service_account.email
     }
   }
+  
+  depends_on = [google_project_service.services["run.googleapis.com"]]
 }
 
-resource "google_service_account" "cloud_run_sa" {
-  account_id   = "cloud-run-sa"
-  display_name = "Cloud Run Service Account"
+# Create notification for new files in the bucket
+resource "google_storage_notification" "notification" {
+  bucket         = google_storage_bucket.data_bucket.name
+  payload_format = "JSON_API_V1"
+  event_types    = ["OBJECT_FINALIZE"]
+  topic          = google_pubsub_topic.gcs_notification_topic.id
+  
+  depends_on = [google_pubsub_topic_iam_binding.binding]
 }
 
-resource "google_project_iam_member" "cloud_run_invoker" {
-  role   = "roles/run.invoker"
-  member = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+# Create a Pub/Sub topic for GCS notifications
+resource "google_pubsub_topic" "gcs_notification_topic" {
+  name = "gcs-notification-topic"
 }
 
-output "extract_function_url" {
-  value = google_cloud_run_service.extract.status[0].url
+# Grant permission to GCS to publish to this topic
+resource "google_pubsub_topic_iam_binding" "binding" {
+  topic   = google_pubsub_topic.gcs_notification_topic.id
+  role    = "roles/pubsub.publisher"
+  members = ["serviceAccount:service-${var.project_number}@gs-project-accounts.iam.gserviceaccount.com"]
 }
 
-output "load_function_url" {
-  value = google_cloud_run_service.load.status[0].url
+# Create a Pub/Sub subscription to trigger the Cloud Run load function
+resource "google_pubsub_subscription" "subscription" {
+  name  = "gcs-notification-subscription"
+  topic = google_pubsub_topic.gcs_notification_topic.id
+  
+  push_config {
+    push_endpoint = google_cloud_run_v2_service.load_service.uri
+    
+    oidc_token {
+      service_account_email = google_service_account.etl_service_account.email
+    }
+  }
+  
+  depends_on = [google_cloud_run_v2_service.load_service]
 }
 
-output "data_bucket_name" {
-  value = google_storage_bucket.data_bucket.name
+# Allow public access to the extract function
+resource "google_cloud_run_service_iam_binding" "extract_public" {
+  location = var.region
+  service  = google_cloud_run_v2_service.extract_service.name
+  role     = "roles/run.invoker"
+  members  = ["allUsers"]
 }
