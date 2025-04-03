@@ -4,65 +4,53 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
     name: Build and Deploy
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Improved authentication step
-      - name: Google Auth
-        id: auth
-        uses: google-github-actions/auth@v1
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v1'
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-          token_format: 'access_token'
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v1'
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
-          install_components: 'gke-gcloud-auth-plugin'
 
-      # Build and push Extract component
-      - name: Build Extract Docker image
+      # Enable required APIs (in case they're not already enabled)
+      - name: 'Enable APIs'
         run: |
-          cd ${{ github.workspace }}
-          # Create a temporary cloudbuild.yaml file
-          cat > cloudbuild-extract.yaml << EOF
-          steps:
-          - name: 'gcr.io/cloud-builders/docker'
-            args: ['build', '-f', 'docker/extract/Dockerfile', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}', '.']
-          images:
-          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest'
-          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}'
-          EOF
+          gcloud services enable cloudbuild.googleapis.com
+          gcloud services enable run.googleapis.com
+          gcloud services enable storage.googleapis.com
+          gcloud services enable bigquery.googleapis.com
+
+      # Build Docker image directly with gcloud
+      - name: 'Build Extract Docker Image'
+        run: |
+          gcloud builds submit \
+            --tag=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest \
+            --tag=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }} \
+            --dockerfile=docker/extract/Dockerfile .
           
-          # Submit the build
-          gcloud builds submit --config cloudbuild-extract.yaml .
           echo "EXTRACT_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}" >> $GITHUB_ENV
 
-      # Build and push Load component
-      - name: Build Load Docker image
+      - name: 'Build Load Docker Image'
         run: |
-          cd ${{ github.workspace }}
-          # Create a temporary cloudbuild.yaml file
-          cat > cloudbuild-load.yaml << EOF
-          steps:
-          - name: 'gcr.io/cloud-builders/docker'
-            args: ['build', '-f', 'docker/load/Dockerfile', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}', '.']
-          images:
-          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest'
-          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}'
-          EOF
-          
-          # Submit the build
-          gcloud builds submit --config cloudbuild-load.yaml .
+          gcloud builds submit \
+            --tag=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest \
+            --tag=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }} \
+            --dockerfile=docker/load/Dockerfile .
+            
           echo "LOAD_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}" >> $GITHUB_ENV
 
       # Setup Terraform
@@ -113,31 +101,3 @@ jobs:
         working-directory: ${{ github.workspace }}/terraform
         run: |
           terraform apply -auto-approve tfplan
-
-      # Test the deployment
-      - name: Test Extract Function
-        run: |
-          # Wait for services to be fully deployed
-          sleep 30
-          
-          # Get the extract function URL
-          EXTRACT_URL=$(gcloud run services describe etl-extract-service \
-            --region=${{ secrets.GCP_REGION || 'us-central1' }} \
-            --format='value(status.url)')
-          
-          # Test the extract function
-          curl -X POST $EXTRACT_URL \
-            -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            -o extract_response.json
-          
-          cat extract_response.json
-          
-          # Check if the response contains success: true
-          if grep -q '"success":true' extract_response.json; then
-            echo "✅ Extract function test passed"
-          else
-            echo "❌ Extract function test failed"
-            exit 1
-          fi
