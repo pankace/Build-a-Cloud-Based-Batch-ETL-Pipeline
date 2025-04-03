@@ -25,8 +25,9 @@ jobs:
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-          token_format: 'access_token'
-
+          create_credentials_file: true
+          export_environment_variables: true
+          
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
         with:
