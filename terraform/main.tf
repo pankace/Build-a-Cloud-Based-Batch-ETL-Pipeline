@@ -279,12 +279,11 @@ resource "google_pubsub_subscription" "subscription" {
   # Add lifecycle block for subscription
   lifecycle {
     ignore_changes = [
-      name,
-      topic
+      name,  # For storage bucket, topic, etc.
+      dataset_id,  # For BigQuery dataset
+      account_id   # For service account
     ]
-  }
 }
-
 # Allow public access to the extract function
 resource "google_cloud_run_service_iam_binding" "extract_public" {
   location = var.region
