@@ -15,12 +15,15 @@ resource "google_cloud_scheduler_job" "etl_scheduler_job" {
     }
   }
   
-  # Add lifecycle block to handle existing job
+  # Better lifecycle configuration to handle existing resource
   lifecycle {
     ignore_changes = [
-      http_target[0].uri,
-      http_target[0].oidc_token
+      name,           # Ignore name changes to handle existing job
+      http_target,    # Ignore ALL http_target changes (more comprehensive)
+      description,    # In case description was changed manually
+      schedule        # In case schedule was changed manually
     ]
+    create_before_destroy = false
   }
   
   depends_on = [google_project_service.services["cloudscheduler.googleapis.com"]]
