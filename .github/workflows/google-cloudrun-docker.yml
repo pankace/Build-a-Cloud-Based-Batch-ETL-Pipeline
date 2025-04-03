@@ -129,13 +129,14 @@ jobs:
           terraform apply -auto-approve tfplan
 
       # Test the deployment
+       # Test the deployment
       - name: Test Extract Function
         run: |
           # Wait for services to be fully deployed
           sleep 30
           
-          # Get the extract function URL
-          EXTRACT_URL=$(gcloud run services describe etl-extract-service \
+          # Get the extract function URL - FIXED SERVICE NAME
+          EXTRACT_URL=$(gcloud run services describe extract-service \
             --region=${{ secrets.GCP_REGION || 'us-central1' }} \
             --format='value(status.url)')
           

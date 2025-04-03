@@ -14,9 +14,15 @@ provider "google" {
 
 # Create GCS bucket for data storage
 resource "google_storage_bucket" "data_bucket" {
-  name     = "${var.project_id}-data-bucket"
-  location = var.region
+  name          = "${var.project_id}-data-bucket"
+  location      = var.region
   force_destroy = true
+  
+  lifecycle {
+    ignore_changes = [
+      name
+    ]
+  }
 }
 
 # Create BigQuery dataset
@@ -24,6 +30,12 @@ resource "google_bigquery_dataset" "etl_dataset" {
   dataset_id  = var.bigquery_dataset_id
   description = "Dataset for ETL pipeline data"
   location    = var.region
+  
+  lifecycle {
+    ignore_changes = [
+      dataset_id
+    ]
+  }
 }
 
 # Create BigQuery table
@@ -55,6 +67,12 @@ resource "google_bigquery_table" "etl_table" {
   }
 ]
 EOF
+
+  lifecycle {
+    ignore_changes = [
+      table_id
+    ]
+  }
 }
 
 # Enable required APIs
@@ -69,12 +87,22 @@ resource "google_project_service" "services" {
   ])
   project = var.project_id
   service = each.value
+  
+  disable_on_destroy = false
 }
 
 # Service account for the Cloud Run services
 resource "google_service_account" "etl_service_account" {
   account_id   = "etl-service-account"
   display_name = "ETL Pipeline Service Account"
+  
+  lifecycle {
+    ignore_changes = [
+      account_id,
+      id,
+      email
+    ]
+  }
 }
 
 # Grant permissions to service account
@@ -189,6 +217,24 @@ resource "google_cloud_run_v2_job" "load_job" {
   depends_on = [google_project_service.services["run.googleapis.com"]]
 }
 
+# Create a Pub/Sub topic for GCS notifications
+resource "google_pubsub_topic" "gcs_notification_topic" {
+  name = "gcs-notification-topic"
+  
+  lifecycle {
+    ignore_changes = [
+      name
+    ]
+  }
+}
+
+# Grant permission to GCS to publish to this topic
+resource "google_pubsub_topic_iam_binding" "binding" {
+  topic   = google_pubsub_topic.gcs_notification_topic.id
+  role    = "roles/pubsub.publisher"
+  members = ["serviceAccount:service-${var.project_number}@gs-project-accounts.iam.gserviceaccount.com"]
+}
+
 # Create notification for new files in the bucket
 resource "google_storage_notification" "notification" {
   bucket         = google_storage_bucket.data_bucket.name
@@ -197,18 +243,6 @@ resource "google_storage_notification" "notification" {
   topic          = google_pubsub_topic.gcs_notification_topic.id
   
   depends_on = [google_pubsub_topic_iam_binding.binding]
-}
-
-# Create a Pub/Sub topic for GCS notifications
-resource "google_pubsub_topic" "gcs_notification_topic" {
-  name = "gcs-notification-topic"
-}
-
-# Grant permission to GCS to publish to this topic
-resource "google_pubsub_topic_iam_binding" "binding" {
-  topic   = google_pubsub_topic.gcs_notification_topic.id
-  role    = "roles/pubsub.publisher"
-  members = ["serviceAccount:service-${var.project_number}@gs-project-accounts.iam.gserviceaccount.com"]
 }
 
 # Create a Pub/Sub subscription to trigger the Cloud Run load function
