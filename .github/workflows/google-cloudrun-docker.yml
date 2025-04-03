@@ -6,22 +6,26 @@ on:
       - main
   workflow_dispatch:  # Allows manual triggering
 
-env:
-  TF_LOG: INFO
-  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-credentials.json
-
 jobs:
   build-and-deploy:
     name: Build and Deploy
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up GCP credentials
-        run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > ${{ github.workspace }}/gcp-credentials.json
+      # Authenticate to Google Cloud using the official auth action
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          token_format: 'access_token'
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
@@ -29,11 +33,9 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           install_components: 'gke-gcloud-auth-plugin'
 
-      - name: Configure Docker for GCR
-        run: |
-          gcloud auth configure-docker gcr.io --quiet
+      # Configure Docker for GCR is handled by auth action
 
-      # Build and push Extract component - FIXED COMMAND
+      # Build and push Extract component
       - name: Build Extract Docker image
         run: |
           cd ${{ github.workspace }}
@@ -51,7 +53,7 @@ jobs:
           gcloud builds submit --config cloudbuild-extract.yaml .
           echo "EXTRACT_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}" >> $GITHUB_ENV
 
-      # Build and push Load component - FIXED COMMAND
+      # Build and push Load component
       - name: Build Load Docker image
         run: |
           cd ${{ github.workspace }}
@@ -145,9 +147,3 @@ jobs:
             echo "❌ Extract function test failed"
             exit 1
           fi
-
-      # Cleanup
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f ${{ github.workspace }}/gcp-credentials.json
