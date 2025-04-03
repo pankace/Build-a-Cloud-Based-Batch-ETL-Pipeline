@@ -12,28 +12,32 @@ provider "google" {
   region  = var.region
 }
 
-# Create GCS bucket for data storage
+# Import existing GCS bucket
 resource "google_storage_bucket" "data_bucket" {
   name          = "${var.project_id}-data-bucket"
   location      = var.region
   force_destroy = true
   
   lifecycle {
+    # Changed to ignore_changes instead of prevent_destroy
     ignore_changes = [
-      name
+      name,
+      location
     ]
   }
 }
 
-# Create BigQuery dataset
+# Import existing BigQuery dataset
 resource "google_bigquery_dataset" "etl_dataset" {
   dataset_id  = var.bigquery_dataset_id
   description = "Dataset for ETL pipeline data"
   location    = var.region
   
   lifecycle {
+    # Changed to ignore_changes instead of prevent_destroy
     ignore_changes = [
-      dataset_id
+      dataset_id,
+      location
     ]
   }
 }
@@ -68,9 +72,11 @@ resource "google_bigquery_table" "etl_table" {
 ]
 EOF
 
+  # Add lifecycle block to handle existing table
   lifecycle {
     ignore_changes = [
-      table_id
+      table_id,
+      schema
     ]
   }
 }
@@ -91,15 +97,16 @@ resource "google_project_service" "services" {
   disable_on_destroy = false
 }
 
-# Service account for the Cloud Run services
+# Import existing service account
 resource "google_service_account" "etl_service_account" {
   account_id   = "etl-service-account"
   display_name = "ETL Pipeline Service Account"
   
   lifecycle {
+    # Changed to ignore_changes instead of prevent_destroy
     ignore_changes = [
       account_id,
-      id,
+      display_name,
       email
     ]
   }
@@ -217,11 +224,12 @@ resource "google_cloud_run_v2_job" "load_job" {
   depends_on = [google_project_service.services["run.googleapis.com"]]
 }
 
-# Create a Pub/Sub topic for GCS notifications
+# Import existing Pub/Sub topic
 resource "google_pubsub_topic" "gcs_notification_topic" {
   name = "gcs-notification-topic"
   
   lifecycle {
+    # Changed to ignore_changes instead of prevent_destroy
     ignore_changes = [
       name
     ]
@@ -243,6 +251,14 @@ resource "google_storage_notification" "notification" {
   topic          = google_pubsub_topic.gcs_notification_topic.id
   
   depends_on = [google_pubsub_topic_iam_binding.binding]
+  
+  # Add lifecycle block for notification
+  lifecycle {
+    ignore_changes = [
+      bucket,
+      topic
+    ]
+  }
 }
 
 # Create a Pub/Sub subscription to trigger the Cloud Run load function
@@ -259,6 +275,14 @@ resource "google_pubsub_subscription" "subscription" {
   }
   
   depends_on = [google_cloud_run_v2_service.load_service]
+  
+  # Add lifecycle block for subscription
+  lifecycle {
+    ignore_changes = [
+      name,
+      topic
+    ]
+  }
 }
 
 # Allow public access to the extract function
