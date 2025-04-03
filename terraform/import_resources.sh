@@ -14,9 +14,9 @@ terraform import google_storage_bucket.data_bucket ${PROJECT_ID}-data-bucket || 
 echo "Attempting to import BigQuery dataset: ${PROJECT_ID}:etl_dataset"
 terraform import google_bigquery_dataset.etl_dataset ${PROJECT_ID}:etl_dataset || echo "Dataset import failed, might not exist yet"
 
-# Import the BigQuery table if it exists
+# Import the BigQuery table if it exists - Fix the format
 echo "Attempting to import BigQuery table: ${PROJECT_ID}:etl_dataset.posts"
-terraform import google_bigquery_table.etl_table ${PROJECT_ID}:etl_dataset.posts || echo "Table import failed, might not exist yet"
+terraform import google_bigquery_table.etl_table projects/${PROJECT_ID}/datasets/etl_dataset/tables/posts || echo "Table import failed, might not exist yet"
 
 # Import the service account
 echo "Attempting to import service account"
@@ -26,16 +26,16 @@ terraform import google_service_account.etl_service_account projects/${PROJECT_I
 echo "Attempting to import Pub/Sub topic"
 terraform import google_pubsub_topic.gcs_notification_topic projects/${PROJECT_ID}/topics/gcs-notification-topic || echo "Topic import failed, might not exist yet"
 
-# Import Cloud Run services - CRITICAL to fix the 409 errors
+# Import Cloud Run services - Fix the format
 echo "Attempting to import Cloud Run extract service"
-terraform import google_cloud_run_v2_service.extract_service locations/${REGION}/services/extract-service || echo "Extract service import failed, might not exist yet"
+terraform import google_cloud_run_v2_service.extract_service projects/${PROJECT_ID}/locations/${REGION}/services/extract-service || echo "Extract service import failed, might not exist yet"
 
 echo "Attempting to import Cloud Run load service"
-terraform import google_cloud_run_v2_service.load_service locations/${REGION}/services/load-service || echo "Load service import failed, might not exist yet"
+terraform import google_cloud_run_v2_service.load_service projects/${PROJECT_ID}/locations/${REGION}/services/load-service || echo "Load service import failed, might not exist yet"
 
-# Import the Cloud Run job if it exists
+# Import the Cloud Run job if it exists - Fix the format
 echo "Attempting to import Cloud Run job"
-terraform import google_cloud_run_v2_job.load_job locations/${REGION}/jobs/load-job || echo "Load job import failed, might not exist yet"
+terraform import google_cloud_run_v2_job.load_job projects/${PROJECT_ID}/locations/${REGION}/jobs/load-job || echo "Load job import failed, might not exist yet"
 
 # Try to import the Pub/Sub subscription if it exists
 echo "Attempting to import Pub/Sub subscription"
@@ -45,7 +45,21 @@ terraform import google_pubsub_subscription.subscription projects/${PROJECT_ID}/
 echo "Attempting to import Storage notification"
 terraform import google_storage_notification.notification ${PROJECT_ID}-data-bucket/notificationConfigs/1 || echo "Storage notification import failed, might not exist yet"
 
-terraform state rm google_bigquery_dataset.etl_dataset
-terraform state rm google_cloud_run_v2_service.extract_service
-terraform state rm google_cloud_run_v2_service.load_service
+# Remove state entries only if they exist
+echo "Checking state before removing resources..."
+if terraform state list | grep -q "google_bigquery_dataset.etl_dataset"; then
+  echo "Removing BigQuery dataset from state..."
+  terraform state rm google_bigquery_dataset.etl_dataset
+fi
+
+if terraform state list | grep -q "google_cloud_run_v2_service.extract_service"; then
+  echo "Removing extract service from state..."
+  terraform state rm google_cloud_run_v2_service.extract_service
+fi
+
+if terraform state list | grep -q "google_cloud_run_v2_service.load_service"; then
+  echo "Removing load service from state..."
+  terraform state rm google_cloud_run_v2_service.load_service
+fi
+
 echo "Import completed. Now terraform plan will show what changes are needed."
