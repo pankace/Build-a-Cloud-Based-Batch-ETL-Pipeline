@@ -198,35 +198,62 @@ resource "google_cloud_run_v2_service" "extract_service" {
 }
 
 # Load Service (Cloud Run)
-resource "google_cloud_scheduler_job" "etl_scheduler_job" {
-  name             = "etl-trigger"
-  description      = "Triggers the ETL extract service on a schedule"
-  schedule         = "0 */6 * * *"  # Every 6 hours
-  time_zone        = "UTC"
-  region           = var.region
-  attempt_deadline = "320s"
-
-  http_target {
-    http_method = "GET"
-    uri         = google_cloud_run_v2_service.extract_service.uri
-    
-    oidc_token {
-      service_account_email = google_service_account.etl_service_account.email
+resource "google_cloud_run_v2_service" "load_service" {
+  name     = "load-service"
+  location = var.region
+  
+  template {
+    containers {
+      image = var.load_image
+      
+      env {
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      
+      env {
+        name  = "BIGQUERY_DATASET_ID"
+        value = google_bigquery_dataset.etl_dataset.dataset_id
+      }
+      
+      env {
+        name  = "BIGQUERY_TABLE_ID"
+        value = google_bigquery_table.etl_table.table_id
+      }
+      
+      env {
+        name  = "GCS_BUCKET"
+        value = google_storage_bucket.data_bucket.name
+      }
+      
+      # Add startup probe to give the container more time to initialize
+      startup_probe {
+        initial_delay_seconds = 15
+        timeout_seconds = 5
+        period_seconds = 10
+        failure_threshold = 20
+        
+        http_get {
+          path = "/"
+          port = 8080
+        }
+      }
     }
+    
+    service_account = google_service_account.etl_service_account.email
   }
   
-  # Better lifecycle configuration to handle existing resource
   lifecycle {
     ignore_changes = [
-      name,           # Ignore name changes to handle existing job
-      http_target,    # Ignore ALL http_target changes (more comprehensive)
-      description,    # In case description was changed manually
-      schedule        # In case schedule was changed manually
+      template[0].containers[0].image,
+      template[0].service_account,
+      client,
+      client_version,
+      template[0].containers[0].startup_probe
     ]
-    create_before_destroy = false
   }
   
-  depends_on = [google_project_service.services["cloudscheduler.googleapis.com"]]
+  depends_on = [google_project_service.services["run.googleapis.com"]]
 }
 
 # GCS Notification Configuration
