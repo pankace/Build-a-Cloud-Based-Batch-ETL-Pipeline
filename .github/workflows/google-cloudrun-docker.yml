@@ -1,52 +1,170 @@
-name: 'Terraform Apply'
+name: Deploy ETL Pipeline
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
-  terraform:
-    name: 'Terraform'
+  build-and-deploy:
+    name: Build and Deploy
     runs-on: ubuntu-latest
+
     permissions:
-      contents: read
-      id-token: write
+      contents: 'read'
+      id-token: 'write'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: 'Auth to Google Cloud'
-        uses: 'google-github-actions/auth@v1'
+      # Authenticate to Google Cloud using the official auth action
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
+          create_credentials_file: true
+          export_environment_variables: true
+          
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          install_components: 'gke-gcloud-auth-plugin'
 
-      - name: 'Set up Cloud SDK'
-        uses: 'google-github-actions/setup-gcloud@v1'
+      # Build and push Extract component
+      - name: Build Extract Docker image
+        run: |
+          cd ${{ github.workspace }}
+          # Create a temporary cloudbuild.yaml for extract
+          cat > cloudbuild-extract.yaml << EOF
+          steps:
+          - name: 'gcr.io/cloud-builders/docker'
+            args: ['build', '-f', 'docker/extract/Dockerfile', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}', '.']
+          images:
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:latest'
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}'
+          EOF
+          
+          # Submit the build
+          gcloud builds submit --config cloudbuild-extract.yaml .
+          echo "EXTRACT_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}" >> $GITHUB_ENV
 
-      - name: 'Setup Terraform'
+      # Build and push Load component
+      - name: Build Load Docker image
+        run: |
+          cd ${{ github.workspace }}
+          # Create a temporary cloudbuild.yaml for load
+          cat > cloudbuild-load.yaml << EOF
+          steps:
+          - name: 'gcr.io/cloud-builders/docker'
+            args: ['build', '-f', 'docker/load/Dockerfile', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest', '-t', 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}', '.']
+          images:
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:latest'
+          - 'gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}'
+          EOF
+          
+          # Submit the build
+          gcloud builds submit --config cloudbuild-load.yaml .
+          echo "LOAD_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-load:${{ github.sha }}" >> $GITHUB_ENV
+
+      # Setup Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.0.0
+          terraform_version: 1.4.0
+          terraform_wrapper: false
 
-      - name: 'Terraform Init'
-        working-directory: ./terraform
-        run: terraform init
-
-      - name: 'Import existing resources'
-        working-directory: ./terraform
+      # Create Terraform variables file with explicit values
+      - name: Create Terraform variable files
         run: |
-          chmod +x ./import_resources.sh
+          cd ${{ github.workspace }}/terraform
+          
+          # Use environment variables for images
+          EXTRACT_IMAGE="${{ env.EXTRACT_IMAGE }}"
+          LOAD_IMAGE="${{ env.LOAD_IMAGE }}"
+          
+          # Create terraform.tfvars file with explicit values
+          cat > terraform.tfvars << EOF
+          project_id = "${{ secrets.GCP_PROJECT_ID }}"
+          project_number = "${{ secrets.GCP_PROJECT_NUMBER }}"
+          extract_image = "$EXTRACT_IMAGE"
+          load_image = "$LOAD_IMAGE"
+          region = "${{ secrets.GCP_REGION || 'us-central1' }}"
+          bigquery_dataset_id = "etl_dataset"
+          bigquery_table_id = "posts"
+          data_source_url = "https://jsonplaceholder.typicode.com/posts"
+          EOF
+          
+          cat terraform.tfvars
+
+      # Initialize Terraform
+      - name: Terraform Init
+        working-directory: ${{ github.workspace }}/terraform
+        run: |
+          terraform init
+
+      # Make sure import script is executable
+      - name: Prepare Import Script
+        working-directory: ${{ github.workspace }}/terraform
+        run: |
+          # Ensure file exists and is executable
+          ls -la
+          if [ ! -f import_resources.sh ]; then
+            echo "Creating import_resources.sh..."
+            cat > import_resources.sh << 'EOF'
+          #!/bin/bash
+          
+          # Set your project ID
+          PROJECT_ID=$1
+          
+          echo "Importing existing resources from project $PROJECT_ID"
+          
+          # Import the GCS bucket
+          echo "Attempting to import GCS bucket: ${PROJECT_ID}-data-bucket"
+          terraform import google_storage_bucket.data_bucket ${PROJECT_ID}-data-bucket || echo "Bucket import failed, might not exist yet"
+          
+          # Import the BigQuery dataset
+          echo "Attempting to import BigQuery dataset"
+          terraform import google_bigquery_dataset.etl_dataset ${PROJECT_ID}:etl_dataset || echo "Dataset import failed, might not exist yet"
+          
+          # Import the service account
+          echo "Attempting to import service account"
+          terraform import google_service_account.etl_service_account projects/${PROJECT_ID}/serviceAccounts/etl-service-account@${PROJECT_ID}.iam.gserviceaccount.com || echo "Service account import failed, might not exist yet"
+          
+          # Import the Pub/Sub topic
+          echo "Attempting to import Pub/Sub topic"
+          terraform import google_pubsub_topic.gcs_notification_topic projects/${PROJECT_ID}/topics/gcs-notification-topic || echo "Topic import failed, might not exist yet"
+          EOF
+          fi
+          
+          chmod +x import_resources.sh
+
+      # Try to import existing resources
+      - name: Import Existing Resources  
+        working-directory: ${{ github.workspace }}/terraform
+        run: |
           ./import_resources.sh ${{ secrets.GCP_PROJECT_ID }}
-        # This command may fail on some resources if they don't exist yet, but continue anyway
         continue-on-error: true
 
-      - name: 'Terraform Plan'
-        working-directory: ./terraform
-        run: terraform plan
+      # Validate Terraform
+      - name: Terraform Validate
+        working-directory: ${{ github.workspace }}/terraform
+        run: |
+          terraform validate
+          
+      # Plan Terraform changes
+      - name: Terraform Plan
+        working-directory: ${{ github.workspace }}/terraform
+        run: |
+          # First handle any state issues
+          terraform refresh || echo "Refresh failed but continuing"
+          terraform plan -out=tfplan
 
-      - name: 'Terraform Apply'
-        working-directory: ./terraform
-        run: terraform apply -auto-approve
+      # Apply Terraform changes
+      - name: Terraform Apply
+        working-directory: ${{ github.workspace }}/terraform
+        run: |
+          terraform apply -auto-approve
