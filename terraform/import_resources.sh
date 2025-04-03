@@ -45,4 +45,7 @@ terraform import google_pubsub_subscription.subscription projects/${PROJECT_ID}/
 echo "Attempting to import Storage notification"
 terraform import google_storage_notification.notification ${PROJECT_ID}-data-bucket/notificationConfigs/1 || echo "Storage notification import failed, might not exist yet"
 
+terraform state rm google_bigquery_dataset.etl_dataset
+terraform state rm google_cloud_run_v2_service.extract_service
+terraform state rm google_cloud_run_v2_service.load_service
 echo "Import completed. Now terraform plan will show what changes are needed."
