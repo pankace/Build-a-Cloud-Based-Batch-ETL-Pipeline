@@ -6,10 +6,6 @@ on:
       - main
   workflow_dispatch:  # Allows manual triggering
 
-env:
-  TF_LOG: INFO
-  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-credentials.json
-
 jobs:
   build-and-deploy:
     name: Build and Deploy
@@ -19,9 +15,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up GCP credentials
-        run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > ${{ github.workspace }}/gcp-credentials.json
+      # Improved authentication step
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          token_format: 'access_token'
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
@@ -29,11 +29,7 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           install_components: 'gke-gcloud-auth-plugin'
 
-      - name: Configure Docker for GCR
-        run: |
-          gcloud auth configure-docker gcr.io --quiet
-
-      # Build and push Extract component - CORRECTED SYNTAX
+      # Build and push Extract component
       - name: Build Extract Docker image
         run: |
           cd ${{ github.workspace }}
@@ -51,7 +47,7 @@ jobs:
           gcloud builds submit --config cloudbuild-extract.yaml .
           echo "EXTRACT_IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/etl-extract:${{ github.sha }}" >> $GITHUB_ENV
 
-      # Build and push Load component - CORRECTED SYNTAX
+      # Build and push Load component
       - name: Build Load Docker image
         run: |
           cd ${{ github.workspace }}
@@ -87,7 +83,7 @@ jobs:
           extract_image = "${{ env.EXTRACT_IMAGE }}"
           load_image = "${{ env.LOAD_IMAGE }}"
           region = "${{ secrets.GCP_REGION || 'us-central1' }}"
-          bucket_name = "${{ secrets.GCS_BUCKET_NAME || format('etl-data-{0}', secrets.GCP_PROJECT_ID) }}"
+          bucket_name = "${{ secrets.GCS_BUCKET_NAME || 'etl-data-bucket' }}"
           dataset_id = "${{ secrets.BIGQUERY_DATASET_ID || 'etl_dataset' }}"
           table_id = "${{ secrets.BIGQUERY_TABLE_ID || 'posts' }}"
           EOF
@@ -145,9 +141,3 @@ jobs:
             echo "❌ Extract function test failed"
             exit 1
           fi
-
-      # Cleanup
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f ${{ github.workspace }}/gcp-credentials.json
