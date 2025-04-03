@@ -12,75 +12,6 @@ provider "google" {
   region  = var.region
 }
 
-# Import existing GCS bucket
-resource "google_storage_bucket" "data_bucket" {
-  name          = "${var.project_id}-data-bucket"
-  location      = var.region
-  force_destroy = true
-  
-  lifecycle {
-    # Changed to ignore_changes instead of prevent_destroy
-    ignore_changes = [
-      name,
-      location
-    ]
-  }
-}
-
-# Import existing BigQuery dataset
-resource "google_bigquery_dataset" "etl_dataset" {
-  dataset_id  = var.bigquery_dataset_id
-  description = "Dataset for ETL pipeline data"
-  location    = var.region
-  
-  lifecycle {
-    # Changed to ignore_changes instead of prevent_destroy
-    ignore_changes = [
-      dataset_id,
-      location
-    ]
-  }
-}
-
-# Create BigQuery table
-resource "google_bigquery_table" "etl_table" {
-  dataset_id = google_bigquery_dataset.etl_dataset.dataset_id
-  table_id   = var.bigquery_table_id
-
-  schema = <<EOF
-[
-  {
-    "name": "userId",
-    "type": "INTEGER",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "id",
-    "type": "INTEGER",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "title",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  },
-  {
-    "name": "body",
-    "type": "STRING",
-    "mode": "NULLABLE"
-  }
-]
-EOF
-
-  # Add lifecycle block to handle existing table
-  lifecycle {
-    ignore_changes = [
-      table_id,
-      schema
-    ]
-  }
-}
-
 # Enable required APIs
 resource "google_project_service" "services" {
   for_each = toset([
@@ -89,7 +20,8 @@ resource "google_project_service" "services" {
     "bigquery.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudscheduler.googleapis.com",
-    "artifactregistry.googleapis.com"
+    "artifactregistry.googleapis.com",
+    "pubsub.googleapis.com"
   ])
   project = var.project_id
   service = each.value
@@ -97,22 +29,92 @@ resource "google_project_service" "services" {
   disable_on_destroy = false
 }
 
-# Import existing service account
+# GCS Bucket for data storage
+resource "google_storage_bucket" "data_bucket" {
+  name          = "${var.project_id}-data-bucket"
+  location      = var.region
+  force_destroy = true
+  
+  lifecycle {
+    ignore_changes = [
+      name,
+      location
+    ]
+  }
+}
+
+# BigQuery Dataset
+resource "google_bigquery_dataset" "etl_dataset" {
+  dataset_id  = var.bigquery_dataset_id
+  friendly_name = "ETL Dataset"
+  description = "Dataset for ETL pipeline data"
+  location    = var.region
+  delete_contents_on_destroy = false
+  
+  lifecycle {
+    ignore_changes = [
+      dataset_id,
+      location
+    ]
+  }
+}
+
+# BigQuery Table
+resource "google_bigquery_table" "etl_table" {
+  dataset_id = google_bigquery_dataset.etl_dataset.dataset_id
+  table_id   = var.bigquery_table_id
+  deletion_protection = false
+
+  schema = jsonencode([
+    {
+      name = "userId",
+      type = "INTEGER",
+      mode = "NULLABLE"
+    },
+    {
+      name = "id",
+      type = "INTEGER",
+      mode = "NULLABLE"
+    },
+    {
+      name = "title",
+      type = "STRING",
+      mode = "NULLABLE"
+    },
+    {
+      name = "body",
+      type = "STRING",
+      mode = "NULLABLE"
+    },
+    {
+      name = "processedAt",
+      type = "TIMESTAMP",
+      mode = "NULLABLE"
+    }
+  ])
+
+  lifecycle {
+    ignore_changes = [
+      schema,
+      table_id
+    ]
+  }
+}
+
+# Service Account for ETL operations
 resource "google_service_account" "etl_service_account" {
   account_id   = "etl-service-account"
   display_name = "ETL Pipeline Service Account"
   
   lifecycle {
-    # Changed to ignore_changes instead of prevent_destroy
     ignore_changes = [
       account_id,
-      display_name,
-      email
+      display_name
     ]
   }
 }
 
-# Grant permissions to service account
+# Grant Storage Admin permissions to service account
 resource "google_project_iam_binding" "storage_admin" {
   project = var.project_id
   role    = "roles/storage.admin"
@@ -121,6 +123,7 @@ resource "google_project_iam_binding" "storage_admin" {
   ]
 }
 
+# Grant BigQuery Admin permissions to service account
 resource "google_project_iam_binding" "bigquery_admin" {
   project = var.project_id
   role    = "roles/bigquery.admin"
@@ -129,7 +132,27 @@ resource "google_project_iam_binding" "bigquery_admin" {
   ]
 }
 
-# Deploy Extract function to Cloud Run
+# Pub/Sub Topic for GCS notifications
+resource "google_pubsub_topic" "gcs_notification_topic" {
+  name = "gcs-notification-topic"
+  
+  lifecycle {
+    ignore_changes = [
+      name
+    ]
+  }
+  
+  depends_on = [google_project_service.services["pubsub.googleapis.com"]]
+}
+
+# Grant permissions for GCS to publish to Pub/Sub
+resource "google_pubsub_topic_iam_binding" "binding" {
+  topic   = google_pubsub_topic.gcs_notification_topic.id
+  role    = "roles/pubsub.publisher"
+  members = ["serviceAccount:service-${var.project_number}@gs-project-accounts.iam.gserviceaccount.com"]
+}
+
+# Extract Service (Cloud Run)
 resource "google_cloud_run_v2_service" "extract_service" {
   name     = "extract-service"
   location = var.region
@@ -152,15 +175,29 @@ resource "google_cloud_run_v2_service" "extract_service" {
         name  = "DATA_SOURCE_URL"
         value = var.data_source_url
       }
+      
+      env {
+        name  = "PUBSUB_TOPIC"
+        value = google_pubsub_topic.gcs_notification_topic.id
+      }
     }
     
     service_account = google_service_account.etl_service_account.email
   }
   
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+      template[0].service_account,
+      client,
+      client_version
+    ]
+  }
+  
   depends_on = [google_project_service.services["run.googleapis.com"]]
 }
 
-# Deploy Load function to Cloud Run
+# Load Service (Cloud Run)
 resource "google_cloud_run_v2_service" "load_service" {
   name     = "load-service"
   location = var.region
@@ -183,15 +220,70 @@ resource "google_cloud_run_v2_service" "load_service" {
         name  = "BIGQUERY_TABLE_ID"
         value = google_bigquery_table.etl_table.table_id
       }
+      
+      env {
+        name  = "GCS_BUCKET"
+        value = google_storage_bucket.data_bucket.name
+      }
     }
     
     service_account = google_service_account.etl_service_account.email
   }
   
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+      template[0].service_account,
+      client,
+      client_version
+    ]
+  }
+  
   depends_on = [google_project_service.services["run.googleapis.com"]]
 }
 
-# Set up the GCS trigger for the Load function
+# GCS Notification Configuration
+resource "google_storage_notification" "notification" {
+  bucket         = google_storage_bucket.data_bucket.name
+  payload_format = "JSON_API_V1"
+  event_types    = ["OBJECT_FINALIZE"]
+  topic          = google_pubsub_topic.gcs_notification_topic.id
+  
+  depends_on = [google_pubsub_topic_iam_binding.binding]
+  
+  lifecycle {
+    ignore_changes = [
+      bucket,
+      topic
+    ]
+  }
+}
+
+# Pub/Sub Subscription for Load Service
+resource "google_pubsub_subscription" "subscription" {
+  name  = "gcs-notification-subscription"
+  topic = google_pubsub_topic.gcs_notification_topic.id
+  
+  push_config {
+    push_endpoint = google_cloud_run_v2_service.load_service.uri
+    
+    oidc_token {
+      service_account_email = google_service_account.etl_service_account.email
+    }
+  }
+  
+  lifecycle {
+    ignore_changes = [
+      name,
+      topic,
+      push_config
+    ]
+  }
+  
+  depends_on = [google_cloud_run_v2_service.load_service]
+}
+
+# Optional: Cloud Run Job for scheduled or manual load operations
 resource "google_cloud_run_v2_job" "load_job" {
   name     = "load-job"
   location = var.region
@@ -221,68 +313,13 @@ resource "google_cloud_run_v2_job" "load_job" {
     }
   }
   
+  lifecycle {
+    ignore_changes = [
+      template[0].template[0].containers[0].image
+    ]
+  }
+  
   depends_on = [google_project_service.services["run.googleapis.com"]]
-}
-
-# Import existing Pub/Sub topic
-resource "google_pubsub_topic" "gcs_notification_topic" {
-  name = "gcs-notification-topic"
-  
-  lifecycle {
-    # Changed to ignore_changes instead of prevent_destroy
-    ignore_changes = [
-      name
-    ]
-  }
-}
-
-# Grant permission to GCS to publish to this topic
-resource "google_pubsub_topic_iam_binding" "binding" {
-  topic   = google_pubsub_topic.gcs_notification_topic.id
-  role    = "roles/pubsub.publisher"
-  members = ["serviceAccount:service-${var.project_number}@gs-project-accounts.iam.gserviceaccount.com"]
-}
-
-# Create notification for new files in the bucket
-resource "google_storage_notification" "notification" {
-  bucket         = google_storage_bucket.data_bucket.name
-  payload_format = "JSON_API_V1"
-  event_types    = ["OBJECT_FINALIZE"]
-  topic          = google_pubsub_topic.gcs_notification_topic.id
-  
-  depends_on = [google_pubsub_topic_iam_binding.binding]
-  
-  # Add lifecycle block for notification
-  lifecycle {
-    ignore_changes = [
-      bucket,
-      topic
-    ]
-  }
-}
-
-# Create a Pub/Sub subscription to trigger the Cloud Run load function
-resource "google_pubsub_subscription" "subscription" {
-  name  = "gcs-notification-subscription"
-  topic = google_pubsub_topic.gcs_notification_topic.id
-  
-  push_config {
-    push_endpoint = google_cloud_run_v2_service.load_service.uri
-    
-    oidc_token {
-      service_account_email = google_service_account.etl_service_account.email
-    }
-  }
-  
-  depends_on = [google_cloud_run_v2_service.load_service]
-  
-  # Add lifecycle block for subscription
-  lifecycle {
-    ignore_changes = [
-      name,
-      topic
-    ]
-  }
 }
 
 # Allow public access to the extract function

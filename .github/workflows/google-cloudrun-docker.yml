@@ -146,7 +146,7 @@ jobs:
       - name: Import Existing Resources  
         working-directory: ${{ github.workspace }}/terraform
         run: |
-          ./import_resources.sh ${{ secrets.GCP_PROJECT_ID }}
+          ./import_resources.sh  ${{ secrets.GCP_PROJECT_ID }} ${{ secrets.GCP_REGION || 'us-central1' }}
         continue-on-error: true
 
       # Validate Terraform
