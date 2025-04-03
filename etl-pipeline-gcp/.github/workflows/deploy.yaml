@@ -1,0 +1,37 @@
+name: Deploy ETL Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v0.2.0
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          export_default_credentials: true
+
+      - name: Deploy Extract Function
+        run: |
+          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/extract ./docker/extract
+          gcloud run deploy extract-function --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/extract --platform managed --region us-central1 --allow-unauthenticated
+
+      - name: Deploy Load Function
+        run: |
+          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/load ./docker/load
+          gcloud run deploy load-function --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/load --platform managed --region us-central1 --allow-unauthenticated
+
+      - name: Deploy Terraform
+        run: |
+          cd terraform
+          terraform init
+          terraform apply -auto-approve
