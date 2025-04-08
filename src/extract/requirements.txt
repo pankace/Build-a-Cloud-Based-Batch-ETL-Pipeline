@@ -1,7 +1,0 @@
-google-cloud-storage
-google-cloud-bigquery
-pandas
-requests
-functions-framework==3.4.0
-requests==2.31.0
-python-dotenv==1.0.0
