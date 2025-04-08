@@ -26,3 +26,11 @@ def main(request):
     save_to_gcs(bucket_name, destination_blob_name, data)
 
     return "Data extraction and upload to GCS completed.", 200
+
+
+if __name__ == "__main__":
+    # Get port from environment variable or default to 8080
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Run the Flask app
+    app.run(host="0.0.0.0", port=port)

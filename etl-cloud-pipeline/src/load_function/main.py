@@ -32,3 +32,11 @@ def load_data_to_bigquery(data, context):
     load_job.result()  # Wait for the job to complete
 
     print(f'Loaded {load_job.output_rows} rows into {dataset_id}:{table_id}.')
+
+
+if __name__ == "__main__":
+    # Get port from environment variable or default to 8080
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Run the Flask app
+    app.run(host="0.0.0.0", port=port)
