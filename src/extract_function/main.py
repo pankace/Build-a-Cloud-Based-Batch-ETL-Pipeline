@@ -28,9 +28,19 @@ def main(request):
     return "Data extraction and upload to GCS completed.", 200
 
 
+import os
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route('/', methods=['POST', 'GET'])
+def extract_function():
+    # Your extraction logic here
+    return "Data extraction completed", 200
+
 if __name__ == "__main__":
-    # Get port from environment variable or default to 8080
+    # Get port from environment variable
     port = int(os.environ.get("PORT", 8080))
     
-    # Run the Flask app
-    app.run(host="0.0.0.0", port=port)
+    # Important: bind to 0.0.0.0, not localhost
+    app.run(host="0.0.0.0", port=port, debug=False)
