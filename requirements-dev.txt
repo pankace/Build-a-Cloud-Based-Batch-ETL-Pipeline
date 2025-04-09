@@ -1,7 +1,0 @@
-Flask==2.0.1
-google-cloud-storage==1.42.3
-google-cloud-bigquery==2.30.0
-pytest==6.2.4
-black==21.12b0
-flake8==3.9.2
-mypy==0.910

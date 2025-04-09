@@ -1,0 +1,39 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/extract-to-gcs', './src/extract_fuction']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/extract-to-gcs']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', 'extract-to-gcs',
+      '--image', 'gcr.io/$PROJECT_ID/extract-to-gcs',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--allow-unauthenticated'
+    ]
+
+ 
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/gcs-to-bigquery', './src/transform_load']
+
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/gcs-to-bigquery']
+
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', 'gcs-to-bigquery',
+      '--image', 'gcr.io/$PROJECT_ID/gcs-to-bigquery',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--no-allow-unauthenticated'
+    ]
+
+images:
+  - 'gcr.io/$PROJECT_ID/extract-to-gcs'
+  - 'gcr.io/$PROJECT_ID/gcs-to-bigquery'
