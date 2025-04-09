@@ -2,9 +2,9 @@ import json
 import functions_framework
 from google.cloud import bigquery
 
-@functions_framework.cloud_event
-def gcs_to_bigquery(cloud_event):
-    data = cloud_event.data
+@functions_framework.request
+def gcs_to_bigquery(request):
+    data = request.data
     bucket_name = data["bucket"]
     file_name = data["name"]
 
