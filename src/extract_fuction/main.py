@@ -48,6 +48,7 @@ def extract():
         with open(temp_file_path, 'w') as f:
             json.dump(test_data, f)
         
+        
         logger.info(f"Created temporary file at {temp_file_path}")
         
         # Initialize GCS client and upload
