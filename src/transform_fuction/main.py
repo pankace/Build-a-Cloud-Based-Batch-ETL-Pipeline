@@ -2,7 +2,7 @@ import json
 import functions_framework
 from google.cloud import bigquery
 
-@functions_framework.request
+@functions_framework.http
 def gcs_to_bigquery(request):
     data = request.data
     bucket_name = data["bucket"]
