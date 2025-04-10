@@ -24,8 +24,8 @@ def gcs_to_bigquery(request):
         client = bigquery.Client()
 
         # Set dataset and table info
-        dataset_id = "university_taiwan"
-        table_id = "harbour_space_schedule"
+        dataset_id = "etl_dataset"
+        table_id = "test"
         uri = f"gs://{bucket_name}/{file_name}"
 
         # Load job config
