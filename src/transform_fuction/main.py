@@ -91,6 +91,7 @@ def gcs_to_bigquery(request):
         except Exception as e:
             return f"Error accessing bucket: {str(e)}", 400
 
+
     except Exception as e:
         error_message = f"Error processing request: {str(e)}"
         print(error_message)
