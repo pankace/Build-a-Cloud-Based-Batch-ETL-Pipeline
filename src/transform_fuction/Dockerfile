@@ -19,4 +19,4 @@ COPY . .
 ENV PORT 8080
 
 # Start the function framework (CloudEvent function)
-CMD ["functions-framework", "--target=gcs_to_bigquery", "--port=8080", "--source=main.py"]
+CMD ["functions-framework", "--target=main", "--port=8080", "--source=main.py"]
